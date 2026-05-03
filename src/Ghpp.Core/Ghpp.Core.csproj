@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- netstandard2.0 + C# 7.3 keeps us compatible with Unity 2018.4 / Mono .NET 4.x. -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ghpp.Core.Abstractions\Ghpp.Core.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

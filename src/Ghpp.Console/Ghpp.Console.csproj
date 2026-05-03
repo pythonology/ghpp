@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ghpp.Core.Abstractions\Ghpp.Core.Abstractions.csproj" />
+    <ProjectReference Include="..\Ghpp.Core\Ghpp.Core.csproj" />
+    <ProjectReference Include="..\Ghpp.Parsers.ChartFile\Ghpp.Parsers.ChartFile.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AsciiChart.Sharp" Version="1.0.3" />
+    <PackageReference Include="Spectre.Console" Version="0.55.2" />
+  </ItemGroup>
+</Project>
