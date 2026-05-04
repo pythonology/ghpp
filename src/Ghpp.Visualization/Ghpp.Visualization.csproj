@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- netstandard2.0 + C# 7.3 keeps us Unity-compatible. -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ghpp.Core.Abstractions\Ghpp.Core.Abstractions.csproj" />
+    <ProjectReference Include="..\Ghpp.Core\Ghpp.Core.csproj" />
+  </ItemGroup>
+</Project>

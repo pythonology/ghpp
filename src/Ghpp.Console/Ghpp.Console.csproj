@@ -11,6 +11,7 @@
     <ProjectReference Include="..\Ghpp.Core.Abstractions\Ghpp.Core.Abstractions.csproj" />
     <ProjectReference Include="..\Ghpp.Core\Ghpp.Core.csproj" />
     <ProjectReference Include="..\Ghpp.Parsers.ChartFile\Ghpp.Parsers.ChartFile.csproj" />
+    <ProjectReference Include="..\Ghpp.Visualization\Ghpp.Visualization.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -28,32 +28,54 @@ namespace Ghpp.Core.Aggregation
         }
 
         /// <summary>
-        /// Builds the type-weighted NPS curve from annotated notes. Samples a
-        /// sliding sum of per-note weights at <see cref="DifficultyOptions.SampleRateHz"/>
-        /// across the chart duration. Edge samples divide by the actual window
-        /// overlap so the curve does not dip artificially at the start and end.
+        /// Compute a common time grid for the chart: <paramref name="startTime"/>
+        /// and <paramref name="sampleCount"/> spanning the first to last note
+        /// padded by half the NPS window. All Bars must share this grid so
+        /// that pointwise composition lines up sample-for-sample.
         /// </summary>
-        internal static DifficultyCurve Build(IReadOnlyList<AnnotatedNote> notes, DifficultyOptions options)
+        internal static void ComputeTimeGrid(
+            IReadOnlyList<NoteContext> notes,
+            DifficultyOptions options,
+            out double startTime,
+            out int sampleCount)
         {
             if (notes.Count == 0)
             {
-                return new DifficultyCurve(Array.Empty<double>(), options.SampleRateHz, 0.0);
+                startTime = 0.0;
+                sampleCount = 0;
+                return;
             }
-
-            var window = options.NpsWindowSeconds;
-            var halfWindow = window / 2.0;
-
+            var halfWindow = options.NpsWindowSeconds / 2.0;
             var firstTime = notes[0].Source.TimeSeconds;
             var lastTime = notes[notes.Count - 1].Source.TimeSeconds;
-            var startTime = Math.Max(0.0, firstTime - halfWindow);
+            startTime = Math.Max(0.0, firstTime - halfWindow);
             var endTime = lastTime + halfWindow;
             var duration = endTime - startTime;
-            var sampleCount = Math.Max(1, (int)Math.Ceiling(duration * options.SampleRateHz));
+            sampleCount = Math.Max(1, (int)Math.Ceiling(duration * options.SampleRateHz));
+        }
 
-            var weights = ComputeWeights(notes, options);
+        /// <summary>
+        /// Builds a sliding-window NPS curve over <paramref name="notes"/>
+        /// using the supplied per-note <paramref name="weights"/>. Edge samples
+        /// divide by the actual window overlap to avoid artificial dips at
+        /// chart boundaries.
+        /// </summary>
+        internal static DifficultyCurve BuildSliding(
+            IReadOnlyList<NoteContext> notes,
+            double[] weights,
+            DifficultyOptions options,
+            double startTime,
+            int sampleCount)
+        {
             var values = new double[sampleCount];
+            if (notes.Count == 0 || sampleCount == 0)
+            {
+                return new DifficultyCurve(values, options.SampleRateHz, startTime);
+            }
 
-            // Two-pointer sliding sum across time-sorted notes.
+            var halfWindow = options.NpsWindowSeconds / 2.0;
+            var endTime = startTime + sampleCount / options.SampleRateHz;
+
             var lo = 0;
             var hi = 0;
             var running = 0.0;
@@ -75,8 +97,6 @@ namespace Ghpp.Core.Aggregation
                     lo++;
                 }
 
-                // Effective overlap with the chart range avoids spurious drop-off
-                // at the boundaries where the window extends past first/last note.
                 var effectiveLo = Math.Max(winLo, startTime);
                 var effectiveHi = Math.Min(winHi, endTime);
                 var effectiveWindow = Math.Max(1e-6, effectiveHi - effectiveLo);
@@ -87,19 +107,7 @@ namespace Ghpp.Core.Aggregation
             return new DifficultyCurve(values, options.SampleRateHz, startTime);
         }
 
-        private static double[] ComputeWeights(IReadOnlyList<AnnotatedNote> notes, DifficultyOptions options)
-        {
-            var weights = new double[notes.Count];
-            for (var i = 0; i < notes.Count; i++)
-            {
-                var note = notes[i];
-                var typeWeight = TypeWeight(note.Source.Type, options);
-                weights[i] = note.PlayableUnits * typeWeight * note.RhythmMultiplier * note.FretMultiplier;
-            }
-            return weights;
-        }
-
-        private static double TypeWeight(NoteType type, DifficultyOptions options)
+        internal static double TypeWeight(NoteType type, DifficultyOptions options)
         {
             switch (type)
             {

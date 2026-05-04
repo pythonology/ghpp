@@ -32,10 +32,14 @@ namespace Ghpp.Core.Abstractions
         /// <summary>Frets held for this note. <see cref="Frets.None"/> means open.</summary>
         public Frets Frets { get; }
 
-        /// <summary>Sustain length in ticks.</summary>
+        /// <summary>
+        /// Sustain length in ticks. A single scalar across the whole chord
+        /// stack (the parser reduces with max). TODO disjointed sustains:
+        /// per-fret durations would require an int[5] or similar here.
+        /// </summary>
         public int SustainTicks { get; }
 
-        /// <summary>Sustain length in seconds.</summary>
+        /// <summary>Sustain length in seconds. Single scalar; see <see cref="SustainTicks"/>.</summary>
         public double SustainSeconds { get; }
 
         /// <summary>The strum-style classification of the note.</summary>

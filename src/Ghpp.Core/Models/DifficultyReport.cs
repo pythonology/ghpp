@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Ghpp.Core.Aggregation;
+using Ghpp.Core.Patterns;
 
 namespace Ghpp.Core.Models
 {
@@ -34,11 +35,15 @@ namespace Ghpp.Core.Models
         public double P99 { get; set; }
         public double L5 { get; set; }
 
-        // Multiplier stats
-        public double MeanRhythmMultiplier { get; set; }
-        public double MeanFretMultiplier { get; set; }
+        // Per-Bar curves and means
+        public DifficultyCurve CBarCurve { get; set; }
+        public double CBarMean { get; set; }
+        public DifficultyCurve SBarCurve { get; set; }
+        public double SBarMean { get; set; }
+        public DifficultyCurve LBarCurve { get; set; }
+        public double LBarMean { get; set; }
 
-        /// <summary>Histogram of fret-distance jumps between consecutive fretted notes.</summary>
-        public IReadOnlyDictionary<int, int> FretJumpDistribution { get; set; }
+        /// <summary>Per-note lookup of pattern memberships (trills, zigs, ladders, etc.).</summary>
+        public PatternIndex Patterns { get; set; }
     }
 }
