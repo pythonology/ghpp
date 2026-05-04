@@ -6,100 +6,107 @@ namespace Ghpp.Core.Models
     /// </summary>
     public class DifficultyOptions
     {
-        // Type weights
+        // ---- Type weights ------------------------------------------------------
         public double StrumWeight { get; set; } = 1.3;
         public double HopoWeight { get; set; } = 1.0;
         public double TapWeight { get; set; } = 0.9;
 
-        // SBar (rhythm-complexity signal). Each note's per-note contribution
-        // is purely a rhythm-bonus computed from Xexxar island boundaries in
-        // a small look-back window. NPS emerges implicitly through the
-        // sliding-window sum: a fast section with varied rhythm sums many
-        // bonuses together; a fast section with uniform rhythm sums zeros.
-        // All notes (strums, HOPOs, taps) participate equally — HOPOs/Taps
-        // can still be strummed, they just don't *have* to be.
+        // ---- Strum complexity (rhythm-complexity signal) -----------------------
+        // Each effective-strum's per-note contribution is a baseline plus a
+        // rhythm-driven bonus computed from Xexxar island boundaries in a small
+        // look-back window. Uniform fast strumming registers as the baseline;
+        // vastly-varying patterns saturate near the per-note cap.
         public int RhythmHistoryNotes { get; set; } = 8;
         public double RhythmHistorySeconds { get; set; } = 2.0;
 
         /// <summary>
         /// Tolerance for treating two consecutive deltas as the same rhythm
-        /// class. Default 0.20 (±20%) accounts for rhythm-perception leniency:
-        /// a triplet vs a slightly swung triplet feels the same to the player.
+        /// class. Default 0.20 (±20%) accounts for rhythm-perception leniency.
         /// </summary>
         public double RhythmDeltaTolerance { get; set; } = 0.20;
 
-        /// <summary>
-        /// Per-strum baseline contribution. Uniform fast strumming still has
-        /// some difficulty (the picking arm has to sustain rate); this floor
-        /// keeps SBar non-zero through static-rhythm sections. Default 0.15.
-        /// </summary>
-        public double SBarBaselineContribution { get; set; } = 0.15;
+        /// <summary>Per-strum baseline contribution. Floor that keeps StrumComplexity non-zero through static-rhythm sections.</summary>
+        public double StrumBaselineContribution { get; set; } = 0.15;
 
-        /// <summary>Per-note bonus cap (0..1). The contribution scales between baseline and this cap.</summary>
-        public double SBarMaxBonus { get; set; } = 1.0;
+        /// <summary>Per-note bonus cap (0..1).</summary>
+        public double StrumMaxBonus { get; set; } = 1.0;
 
-        /// <summary>
-        /// Saturation constant for the bonus curve: bonus = max·(1 − e^(−boundaries/k)).
-        /// Lower k = bonus saturates faster as boundaries accumulate. Default 2.0
-        /// makes "vastly varying" passages (triple→quad→double) reach near-cap quickly.
-        /// </summary>
-        public double SBarSaturationK { get; set; } = 2.0;
+        /// <summary>Saturation constant for the bonus curve: bonus = max·(1 − e^(−boundaries/k)).</summary>
+        public double StrumSaturationK { get; set; } = 2.0;
 
-        /// <summary>NPS at which the rake-strum dampener begins on detected uniform streams (Quad+).</summary>
-        public double SBarStreamDampenStartNps { get; set; } = 14.0;
+        // The following stream-dampener constants are reserved for future
+        // re-introduction once anchors/pivots are calibrated. They are not
+        // applied by the current StrumComplexity implementation.
 
-        /// <summary>Maximum fraction the rake-strum dampener can subtract.</summary>
-        public double SBarStreamDampenMax { get; set; } = 0.18;
+        /// <summary>NPS at which the rake-strum dampener begins. Currently unused; reserved for future re-introduction.</summary>
+        public double StrumStreamDampenStartNps { get; set; } = 14.0;
 
-        /// <summary>Slope of the rake-strum dampener ramp per NPS above the start threshold.</summary>
-        public double SBarStreamDampenSlope { get; set; } = 0.03;
+        /// <summary>Maximum fraction the rake-strum dampener can subtract. Currently unused; reserved.</summary>
+        public double StrumStreamDampenMax { get; set; } = 0.18;
 
-        // CBar (chord/transition cost)
+        /// <summary>Slope of the rake-strum dampener ramp per NPS above the start threshold. Currently unused; reserved.</summary>
+        public double StrumStreamDampenSlope { get; set; } = 0.03;
+
+        // ---- Fret complexity (chord/transition cost) ---------------------------
         /// <summary>
         /// Hand-shift cost indexed by fret distance (0..4). Distance 0 = same
-        /// fret = no motion; distance 4 = G to O = full hand shift. CBar uses
-        /// this as the baseline transition cost before anchor and finger-cross
-        /// adjustments.
+        /// fret = no motion; distance 4 = G to O = full hand shift.
         /// </summary>
         public double[] FretJumpCost { get; set; } = new double[] { 0.00, 0.10, 0.25, 0.50, 0.80 };
 
         /// <summary>
-        /// Maximum multiplicative discount when chords are fully overlapping
-        /// (one is a subset of the other). The actual discount is scaled by
-        /// the shared-fret ratio: <c>discount = AnchorDiscount × (shared / max(prev,curr))</c>.
-        /// Default 0.40 with full overlap = 40% off; partial overlap gets less.
+        /// Per-held-fret intrinsic cost contribution (frets-and-gaps model).
+        /// A chord's intrinsic difficulty is <c>PerHeld × popcount(F) + PerGap × gapCount(F)</c>.
         /// </summary>
-        public double CBarAnchorDiscount { get; set; } = 0.40;
+        public double FretIntrinsicPerHeld { get; set; } = 0.05;
+
+        /// <summary>
+        /// Per-gap intrinsic cost contribution. A "gap" is a fret index between
+        /// the lowest and highest held that is itself not held (e.g., GO has
+        /// 3 gaps: R, Y, B). Higher than <see cref="FretIntrinsicPerHeld"/>
+        /// because gaps stretch the hand more than additional adjacent frets.
+        /// </summary>
+        public double FretIntrinsicPerGap { get; set; } = 0.10;
+
+        /// <summary>
+        /// Multiplicative discount applied to hand-shift + chord-toggle costs
+        /// when a chord-to-chord transition has at least one shared finger
+        /// (a pivot). Default 0.5 = 50% discount when a pivot is available.
+        /// HOPO/Tap notes never pivot (anchors only).
+        /// </summary>
+        public double FretPivotDiscount { get; set; } = 0.5;
 
         /// <summary>
         /// Per-extra-finger-toggle cost for chord transitions. A simple
         /// single-fret change always involves 2 finger toggles (one off, one
-        /// on); this constant adds cost for each toggle beyond that. Default
-        /// 0.12 means GRY→YBO (4 toggles, 2 extra) adds 0.24 on top of the
-        /// hand-shift cost.
+        /// on); this constant adds cost for each toggle beyond that.
         /// </summary>
-        public double CBarPerExtraToggleCost { get; set; } = 0.12;
+        public double FretPerExtraToggleCost { get; set; } = 0.12;
 
-        /// <summary>Additional discount when a HOPO/Tap chord shares an anchor finger. Default 0.10.</summary>
-        public double CBarHopoChordAnchorBonus { get; set; } = 0.10;
+        // The following dampener / penalty constants are reserved for future
+        // re-introduction. They are not applied by the current FretComplexity
+        // implementation.
 
-        /// <summary>Additive penalty when the topmost-fret motion direction reverses relative to the prior step. Default 0.15.</summary>
-        public double CBarFingerCrossPenalty { get; set; } = 0.15;
+        /// <summary>Additional discount when a HOPO/Tap chord shares an anchor finger. Currently unused; reserved.</summary>
+        public double FretHopoChordAnchorBonus { get; set; } = 0.10;
 
-        /// <summary>NPS at which the trill rake-tap dampener begins to apply. Default 12.0.</summary>
-        public double CBarTrillDampenStartNps { get; set; } = 12.0;
+        /// <summary>Additive penalty when the topmost-fret motion direction reverses. Currently unused; reserved.</summary>
+        public double FretFingerCrossPenalty { get; set; } = 0.15;
 
-        /// <summary>Maximum fraction the trill dampener can subtract. Default 0.20 = 20% reduction at extreme NPS.</summary>
-        public double CBarTrillDampenMax { get; set; } = 0.20;
+        /// <summary>NPS at which the trill rake-tap dampener begins to apply. Currently unused; reserved.</summary>
+        public double FretTrillDampenStartNps { get; set; } = 12.0;
 
-        /// <summary>Slope of the trill dampener ramp per NPS above the start threshold. Default 0.04.</summary>
-        public double CBarTrillDampenSlope { get; set; } = 0.04;
+        /// <summary>Maximum fraction the trill dampener can subtract. Currently unused; reserved.</summary>
+        public double FretTrillDampenMax { get; set; } = 0.20;
 
-        // NPS sampling
+        /// <summary>Slope of the trill dampener ramp per NPS above the start threshold. Currently unused; reserved.</summary>
+        public double FretTrillDampenSlope { get; set; } = 0.04;
+
+        // ---- NPS sampling ------------------------------------------------------
         public double SampleRateHz { get; set; } = 10.0;
         public double NpsWindowSeconds { get; set; } = 1.0;
 
-        // Percentile blend
+        // ---- Percentile blend --------------------------------------------------
         public double PercentileMid { get; set; } = 0.83;
         public double PercentileHigh { get; set; } = 0.93;
         public double PercentilePeak { get; set; } = 0.99;
@@ -110,32 +117,40 @@ namespace Ghpp.Core.Models
         public double WeightTop { get; set; } = 0.20;
         public double WeightPeak { get; set; } = 0.10;
 
-        // Star rating
-        public double StarsExponent { get; set; } = 1.7;
-        public double StarsDivisor { get; set; } = 17.0;
+        // ---- Star rating -------------------------------------------------------
+        public double StarsExponent { get; set; } = 1.2;
+        public double StarsDivisor { get; set; } = 2.7;
 
         public double LengthLogBase { get; set; } = 200.0;
         public double LengthBonusGain { get; set; } = 1.0;
 
-        // LBar (sustain difficulty)
-        /// <summary>Per-note baseline sustain weight, applied to active sustain seconds. Default 0.5.</summary>
-        public double LBarSustainWeight { get; set; } = 0.5;
+        // ---- Sustain complexity ------------------------------------------------
+        /// <summary>
+        /// Per-fret baseline sustain weight. Each held-fret sustain contributes
+        /// this weight to every sample bin it covers. Disjointed sustains
+        /// compound naturally because overlapping bins accumulate before
+        /// saturation.
+        /// </summary>
+        public double SustainPerFretWeight { get; set; } = 0.5;
+
+        /// <summary>Open-note sustain weight, applied to bins covered by an open sustain.</summary>
+        public double SustainOpenWeight { get; set; } = 0.5;
 
         /// <summary>
         /// Saturation constant for density damping. As <c>load</c> grows past
-        /// this value, the damped load tends toward <see cref="LBarMaxLoad"/>
-        /// via tanh. Default 4.0 reaches ~76% saturation at load = 4.
+        /// this value, the damped load tends toward <see cref="SustainMaxLoad"/>
+        /// via tanh.
         /// </summary>
-        public double LBarSaturationK { get; set; } = 4.0;
+        public double SustainSaturationK { get; set; } = 4.0;
 
-        /// <summary>Cap on damped sustain load per sample. Default 8.0.</summary>
-        public double LBarMaxLoad { get; set; } = 8.0;
+        /// <summary>Cap on damped sustain load per sample.</summary>
+        public double SustainMaxLoad { get; set; } = 8.0;
 
-        // Composite (Lp-norm aggregation of CBar/SBar/LBar)
+        // ---- Composite ---------------------------------------------------------
         /// <summary>Lp-norm exponent used to combine the three Bars per sample. p=3 ≈ osu!-style aggregation.</summary>
         public double CompositeExponent { get; set; } = 3.0;
 
-        // Pattern detection
+        // ---- Pattern detection -------------------------------------------------
         /// <summary>
         /// Maximum inter-note time (seconds) before a pattern run is broken.
         /// At 240 BPM 16ths this is ~62.5 ms; the default 0.35 s tolerates

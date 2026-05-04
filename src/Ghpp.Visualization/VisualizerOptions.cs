@@ -32,7 +32,7 @@ namespace Ghpp.Visualization
         /// <summary>Major tick interval (seconds) on the time axis.</summary>
         public double TimeAxisTickSeconds { get; set; } = 10.0;
 
-        /// <summary>Reserved height (px) at the top for column headers (lane letters, kind names, curve labels).</summary>
-        public int ColumnHeaderHeightPx { get; set; } = 24;
+        /// <summary>Reserved height (px) at the top for column headers (lane letters, kind names, curve labels + value-tick labels).</summary>
+        public int ColumnHeaderHeightPx { get; set; } = 38;
     }
 }

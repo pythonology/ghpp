@@ -36,12 +36,12 @@ namespace Ghpp.Core.Models
         public double L5 { get; set; }
 
         // Per-Bar curves and means
-        public DifficultyCurve CBarCurve { get; set; }
-        public double CBarMean { get; set; }
-        public DifficultyCurve SBarCurve { get; set; }
-        public double SBarMean { get; set; }
-        public DifficultyCurve LBarCurve { get; set; }
-        public double LBarMean { get; set; }
+        public DifficultyCurve FretCurve { get; set; }
+        public double FretMean { get; set; }
+        public DifficultyCurve StrumCurve { get; set; }
+        public double StrumMean { get; set; }
+        public DifficultyCurve SustainCurve { get; set; }
+        public double SustainMean { get; set; }
 
         /// <summary>Per-note lookup of pattern memberships (trills, zigs, ladders, etc.).</summary>
         public PatternIndex Patterns { get; set; }

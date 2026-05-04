@@ -29,7 +29,8 @@ namespace Ghpp.Core
             var notes = WrapNotes(chart.Notes);
 
             // Pattern detection: stamp PatternMask on each note before any
-            // Bar evaluator runs (CBar/SBar consume PatternMask for dampening).
+            // Bar evaluator runs. Pattern masks are reserved for future
+            // dampener re-introduction; currently unused by the Bars.
             var patternIndex = PatternScanner.Scan(chart.Notes, options);
             for (var i = 0; i < notes.Count; i++)
             {
@@ -39,16 +40,16 @@ namespace Ghpp.Core
             // Common time grid shared by every Bar so the curves line up.
             DifficultyCurve.ComputeTimeGrid(notes, options, out var startTime, out var sampleCount);
 
-            var sbarCurve = SBar.Build(notes, options, startTime, sampleCount);
-            var cbarCurve = CBar.Build(notes, options, startTime, sampleCount);
-            var lbarCurve = LBar.Build(notes, options, startTime, sampleCount);
+            var fretCurve = FretComplexity.Build(notes, options, startTime, sampleCount);
+            var strumCurve = StrumComplexity.Build(notes, options, startTime, sampleCount);
+            var sustainCurve = SustainComplexity.Build(notes, options, startTime, sampleCount);
 
-            var composite = CompositeCurve.LpNorm(cbarCurve, sbarCurve, lbarCurve, options, startTime);
+            var composite = CompositeCurve.LpNorm(fretCurve, strumCurve, sustainCurve, options, startTime);
 
             var fretLaneNotes = CountPlayableUnits(notes);
             var aggregate = PercentileAggregator.Aggregate(composite.Values, fretLaneNotes, options);
 
-            return BuildReport(chart, notes, composite, cbarCurve, sbarCurve, lbarCurve, aggregate, fretLaneNotes, patternIndex);
+            return BuildReport(chart, notes, composite, fretCurve, strumCurve, sustainCurve, aggregate, fretLaneNotes, patternIndex);
         }
 
         private static List<NoteContext> WrapNotes(IReadOnlyList<Note> source)
@@ -73,9 +74,9 @@ namespace Ghpp.Core
             Chart chart,
             List<NoteContext> notes,
             DifficultyCurve composite,
-            DifficultyCurve cbarCurve,
-            DifficultyCurve sbarCurve,
-            DifficultyCurve lbarCurve,
+            DifficultyCurve fretCurve,
+            DifficultyCurve strumCurve,
+            DifficultyCurve sustainCurve,
             PercentileAggregator.Result aggregate,
             int fretLaneNotes,
             PatternIndex patterns)
@@ -104,17 +105,17 @@ namespace Ghpp.Core
             }
             if (composite.Values.Length > 0) meanNps /= composite.Values.Length;
 
-            var cbarMean = 0.0;
-            foreach (var v in cbarCurve.Values) cbarMean += v;
-            if (cbarCurve.Values.Length > 0) cbarMean /= cbarCurve.Values.Length;
+            var fretMean = 0.0;
+            foreach (var v in fretCurve.Values) fretMean += v;
+            if (fretCurve.Values.Length > 0) fretMean /= fretCurve.Values.Length;
 
-            var sbarMean = 0.0;
-            foreach (var v in sbarCurve.Values) sbarMean += v;
-            if (sbarCurve.Values.Length > 0) sbarMean /= sbarCurve.Values.Length;
+            var strumMean = 0.0;
+            foreach (var v in strumCurve.Values) strumMean += v;
+            if (strumCurve.Values.Length > 0) strumMean /= strumCurve.Values.Length;
 
-            var lbarMean = 0.0;
-            foreach (var v in lbarCurve.Values) lbarMean += v;
-            if (lbarCurve.Values.Length > 0) lbarMean /= lbarCurve.Values.Length;
+            var sustainMean = 0.0;
+            foreach (var v in sustainCurve.Values) sustainMean += v;
+            if (sustainCurve.Values.Length > 0) sustainMean /= sustainCurve.Values.Length;
 
             var duration = 0.0;
             if (chart.Notes.Count > 0)
@@ -127,12 +128,12 @@ namespace Ghpp.Core
             return new DifficultyReport
             {
                 Curve = composite,
-                CBarCurve = cbarCurve,
-                CBarMean = cbarMean,
-                SBarCurve = sbarCurve,
-                SBarMean = sbarMean,
-                LBarCurve = lbarCurve,
-                LBarMean = lbarMean,
+                FretCurve = fretCurve,
+                FretMean = fretMean,
+                StrumCurve = strumCurve,
+                StrumMean = strumMean,
+                SustainCurve = sustainCurve,
+                SustainMean = sustainMean,
 
                 StarRating = aggregate.StarRating,
                 IntensityStars = aggregate.IntensityStars,

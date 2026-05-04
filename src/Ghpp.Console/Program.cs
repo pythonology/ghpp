@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using AsciiChart.Sharp;
 using Ghpp.Core;
 using Ghpp.Core.Abstractions;
@@ -10,15 +11,17 @@ using AsciiPlot = AsciiChart.Sharp.AsciiChart;
 
 if (args.Length == 0)
 {
-    AnsiConsole.MarkupLine("[red]usage:[/] ghpp [[--html]] [[--scale <px/sec>]] [[--lane-width <px>]] <chart-file> [[<chart-file> ...]]");
+    AnsiConsole.MarkupLine("[red]usage:[/] ghpp [[--html]] [[--csv <output.csv>]] [[--scale <px/sec>]] [[--lane-width <px>]] <path> [[<path> ...]]");
     AnsiConsole.MarkupLine("[dim]       --html                write a visualizer HTML alongside each chart[/]");
+    AnsiConsole.MarkupLine("[dim]       --csv <output.csv>    write one summary row per chart to a CSV spreadsheet[/]");
     AnsiConsole.MarkupLine("[dim]       --scale <px/sec>      note distance scale, default 60 (higher = taller)[/]");
     AnsiConsole.MarkupLine("[dim]       --lane-width <px>     fret lane width, default 56 (higher = wider track)[/]");
-    AnsiConsole.MarkupLine("[dim]       (only .chart files are supported for now)[/]");
+    AnsiConsole.MarkupLine("[dim]       (paths may be .chart files or folders scanned recursively)[/]");
     return 1;
 }
 
 var emitHtml = false;
+string? csvOutputPath = null;
 double? scaleOverride = null;
 int? laneWidthOverride = null;
 var pathArgs = new List<string>();
@@ -28,6 +31,10 @@ for (var i = 0; i < args.Length; i++)
     if (a == "--html")
     {
         emitHtml = true;
+    }
+    else if (a == "--csv" && i + 1 < args.Length)
+    {
+        csvOutputPath = args[++i];
     }
     else if (a == "--scale" && i + 1 < args.Length)
     {
@@ -53,29 +60,60 @@ for (var i = 0; i < args.Length; i++)
     }
 }
 
-var parser = new ChartFileParser();
-var failures = 0;
-
-foreach (var path in pathArgs)
+// Expand directory paths to .chart files recursively, tracking origin
+var expandedPaths = new List<(string Path, bool FromFolder)>();
+foreach (var p in pathArgs)
 {
+    if (Directory.Exists(p))
+    {
+        foreach (var f in Directory.EnumerateFiles(p, "*.chart", SearchOption.AllDirectories).Order())
+            expandedPaths.Add((f, true));
+    }
+    else
+    {
+        expandedPaths.Add((p, false));
+    }
+}
+
+var failures = 0;
+var results = new ConcurrentBag<(string Path, Chart Chart, DifficultyReport Report)>();
+
+Parallel.ForEach(expandedPaths, item =>
+{
+    var (path, fromFolder) = item;
+
     if (!File.Exists(path))
     {
         AnsiConsole.MarkupLine($"[red]error:[/] file not found: [yellow]{Markup.Escape(path)}[/]");
-        failures++;
-        continue;
+        Interlocked.Increment(ref failures);
+        return;
     }
     if (!string.Equals(Path.GetExtension(path), ".chart", StringComparison.OrdinalIgnoreCase))
     {
         AnsiConsole.MarkupLine($"[red]error:[/] unsupported file type: [yellow]{Markup.Escape(path)}[/]");
-        failures++;
-        continue;
+        Interlocked.Increment(ref failures);
+        return;
     }
 
     try
     {
-        var chart = parser.Parse(path);
+        var chart = new ChartFileParser().Parse(path);
         var report = DifficultyCalculator.Calculate(chart);
-        PrintReport(path, chart, report);
+
+        if (fromFolder)
+        {
+            var name = chart.Metadata.TryGetValue("Name", out var n) && !string.IsNullOrWhiteSpace(n)
+                ? n : Path.GetFileNameWithoutExtension(path);
+            var color = StarColor(report.StarRating);
+            AnsiConsole.MarkupLine($"[bold {color}]★ {report.StarRating:0.00}[/]  {Markup.Escape(name)}");
+        }
+        else
+        {
+            PrintReport(path, chart, report);
+        }
+
+        results.Add((path, chart, report));
+
         if (emitHtml)
         {
             var vizOptions = new VisualizerOptions();
@@ -97,8 +135,14 @@ foreach (var path in pathArgs)
     {
         AnsiConsole.MarkupLine(
             $"[red]error:[/] failed to process [yellow]{Markup.Escape(path)}[/]: {Markup.Escape(exception.Message)}");
-        failures++;
+        Interlocked.Increment(ref failures);
     }
+});
+
+if (csvOutputPath != null && results.Count > 0)
+{
+    WriteCsv(csvOutputPath, results.OrderBy(r => r.Path).ToList());
+    AnsiConsole.MarkupLine($"[dim]wrote[/] [yellow]{Markup.Escape(csvOutputPath)}[/]");
 }
 
 return failures == 0 ? 0 : 1;
@@ -154,18 +198,18 @@ static void PrintNoteBreakdown(DifficultyReport report)
         $"[dim]Fret-lane[/] {report.FretLaneNotes}    " +
         $"[dim]Duration[/] {report.DurationSeconds:0.00}s");
     AnsiConsole.MarkupLine(
-        $"[dim]CBar[/] {report.CBarMean:0.000}    " +
-        $"[dim]SBar[/] {report.SBarMean:0.000}    " +
-        $"[dim]LBar[/] {report.LBarMean:0.000}");
+        $"[dim]Fret[/] {report.FretMean:0.000}    " +
+        $"[dim]Strum[/] {report.StrumMean:0.000}    " +
+        $"[dim]Sustain[/] {report.SustainMean:0.000}");
 }
 
 static void PrintBarCurves(DifficultyReport report)
 {
     AnsiConsole.WriteLine();
     AnsiConsole.Write(new Rule("[grey]Bar curves[/]").LeftJustified().RuleStyle("grey"));
-    PrintMiniCurve("CBar", report.CBarCurve.Values, "skyblue1");
-    PrintMiniCurve("SBar", report.SBarCurve.Values, "yellow");
-    PrintMiniCurve("LBar", report.LBarCurve.Values, "mediumpurple");
+    PrintMiniCurve("Fret", report.FretCurve.Values, "skyblue1");
+    PrintMiniCurve("Strum", report.StrumCurve.Values, "yellow");
+    PrintMiniCurve("Sustain", report.SustainCurve.Values, "mediumpurple");
 }
 
 static void PrintMiniCurve(string label, double[] values, string color)
@@ -277,6 +321,53 @@ static Color ColorFor(PatternKind kind)
         PatternKind.Quint => Color.HotPink,
         _ => Color.Grey,
     };
+}
+
+static void WriteCsv(string path, IEnumerable<(string Path, Chart Chart, DifficultyReport Report)> results)
+{
+    static string Esc(string s)
+    {
+        if (s.Contains(',') || s.Contains('"') || s.Contains('\n') || s.Contains('\r'))
+            return "\"" + s.Replace("\"", "\"\"") + "\"";
+        return s;
+    }
+    static string Meta(Chart c, string key) =>
+        c.Metadata.TryGetValue(key, out var v) ? v : string.Empty;
+
+    using var w = new StreamWriter(path, append: false, encoding: System.Text.Encoding.UTF8);
+    w.WriteLine("File,Name,Artist,Charter,Year,Genre,StarRating,IntensityStars,LengthBonus,Blended,TotalNotes,FretLaneNotes,StrumCount,HopoCount,TapCount,DurationSeconds,MeanNps,MaxNps,P83,P93,P99,L5,FretMean,StrumMean,SustainMean");
+    foreach (var (filePath, chart, report) in results)
+    {
+        var cols = new[]
+        {
+            Esc(filePath),
+            Esc(Meta(chart, "Name")),
+            Esc(Meta(chart, "Artist")),
+            Esc(Meta(chart, "Charter")),
+            Esc(Meta(chart, "Year")),
+            Esc(Meta(chart, "Genre")),
+            report.StarRating.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+            report.IntensityStars.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+            report.LengthBonus.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+            report.Blended.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture),
+            report.TotalNotes.ToString(),
+            report.FretLaneNotes.ToString(),
+            report.StrumCount.ToString(),
+            report.HopoCount.ToString(),
+            report.TapCount.ToString(),
+            report.DurationSeconds.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+            report.MeanNps.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture),
+            report.MaxNps.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture),
+            report.P83.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture),
+            report.P93.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture),
+            report.P99.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture),
+            report.L5.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture),
+            report.FretMean.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture),
+            report.StrumMean.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture),
+            report.SustainMean.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture),
+        };
+        w.WriteLine(string.Join(",", cols));
+    }
 }
 
 static IList<double> DownsampleForWidth(double[] values, int targetWidth)

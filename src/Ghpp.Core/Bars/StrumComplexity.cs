@@ -1,19 +1,18 @@
 using System;
 using System.Collections.Generic;
 using Ghpp.Core.Abstractions;
-using Ghpp.Core.Abstractions.Patterns;
 using Ghpp.Core.Aggregation;
 using Ghpp.Core.Models;
 
 namespace Ghpp.Core.Bars
 {
     /// <summary>
-    /// Strum rhythm-complexity signal. Each strum's per-note SBar contribution
-    /// is a baseline (the floor cost of sustaining a picking rate) plus a
-    /// rhythm-driven bonus that grows with Xexxar island boundaries in the
-    /// recent strum-history window. Uniform fast strumming registers as the
-    /// baseline; vastly-varying patterns (triple → quad → double, gaps,
-    /// abrupt rhythm shifts) saturate near the per-note cap.
+    /// Strum-rhythm complexity axis. Each effective-strum's per-note
+    /// contribution is a baseline (the floor cost of sustaining a picking
+    /// rate) plus a rhythm-driven bonus that grows with Xexxar island
+    /// boundaries in the recent strum-history window. Uniform fast strumming
+    /// registers as the baseline; vastly-varying patterns (triple → quad →
+    /// double, gaps, abrupt rhythm shifts) saturate near the per-note cap.
     /// </summary>
     /// <remarks>
     /// Only effective-strum notes participate. A note counts as an effective
@@ -24,12 +23,8 @@ namespace Ghpp.Core.Bars
     /// True HOPOs/Taps (with a fret change) don't drive picking-rhythm cost
     /// because the strum bar is genuinely optional for them.
     /// </remarks>
-    internal static class SBar
+    internal static class StrumComplexity
     {
-        private const ulong StreamMask =
-            (1UL << (int)PatternKind.Quad) |
-            (1UL << (int)PatternKind.Quint);
-
         public static DifficultyCurve Build(
             IList<NoteContext> notes,
             DifficultyOptions options,
@@ -41,7 +36,7 @@ namespace Ghpp.Core.Bars
             var weights = new double[notes.Count];
             for (var i = 0; i < notes.Count; i++)
             {
-                weights[i] = notes[i].SBarContribution;
+                weights[i] = notes[i].StrumContribution;
             }
 
             return DifficultyCurve.BuildSliding(
@@ -51,9 +46,7 @@ namespace Ghpp.Core.Bars
         private static void ApplyContributions(IList<NoteContext> notes, DifficultyOptions options)
         {
             // Build an effective-strum timeline so the look-back window
-            // operates on actual picking events. A HOPO/Tap with the same
-            // frets as the previous note is included because it can't use
-            // the HOPO/Tap mechanic (no fret change) and ends up strummed.
+            // operates on actual picking events.
             var strumTimes = new List<double>();
             var strumBackref = new List<int>();
             for (var i = 0; i < notes.Count; i++)
@@ -74,43 +67,26 @@ namespace Ghpp.Core.Bars
                 if (history.Count < 2)
                 {
                     // Not enough rhythm context yet — register the baseline.
-                    bonus = options.SBarBaselineContribution;
+                    bonus = options.StrumBaselineContribution;
                 }
                 else
                 {
                     var deltas = BuildDeltaSequence(history, currentTime);
                     var boundaries = CountIslandBoundaries(deltas, options.RhythmDeltaTolerance);
-                    var rhythmFactor = 1.0 - Math.Exp(-boundaries / options.SBarSaturationK);
-                    bonus = options.SBarBaselineContribution
-                          + (options.SBarMaxBonus - options.SBarBaselineContribution) * rhythmFactor;
+                    var rhythmFactor = 1.0 - Math.Exp(-boundaries / options.StrumSaturationK);
+                    bonus = options.StrumBaselineContribution
+                          + (options.StrumMaxBonus - options.StrumBaselineContribution) * rhythmFactor;
                 }
 
-                // Rake-strum dampener: detected uniform streams (Quad/Quint)
-                // at high NPS get a mild reduction.
-                if ((n.PatternMask & StreamMask) != 0 && history.Count > 0)
-                {
-                    var lastDelta = currentTime - history[0];
-                    if (lastDelta > 0)
-                    {
-                        var localNps = 1.0 / lastDelta;
-                        if (localNps > options.SBarStreamDampenStartNps)
-                        {
-                            var raw = options.SBarStreamDampenSlope * (localNps - options.SBarStreamDampenStartNps);
-                            var dampen = Math.Min(options.SBarStreamDampenMax, raw);
-                            bonus *= 1.0 - dampen;
-                        }
-                    }
-                }
-
-                n.SBarContribution = bonus;
+                n.StrumContribution = bonus;
             }
 
-            // Non-effective-strum notes contribute nothing to SBar.
+            // Non-effective-strum notes contribute nothing.
             for (var i = 0; i < notes.Count; i++)
             {
                 if (!IsEffectiveStrum(notes[i]))
                 {
-                    notes[i].SBarContribution = 0.0;
+                    notes[i].StrumContribution = 0.0;
                 }
             }
         }

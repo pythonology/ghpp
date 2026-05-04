@@ -12,7 +12,7 @@ namespace Ghpp.Visualization
     /// Renders a chart and its <see cref="DifficultyReport"/> to a self-contained
     /// HTML document with a vertical Guitar-Hero-style note highway (bottom =
     /// start of song), per-pattern columns labeled with the pattern name, and
-    /// vertical CBar / SBar / LBar / composite curves to the right.
+    /// vertical Fret / Strum / Sustain / composite curves to the right.
     /// </summary>
     public static class HtmlVisualizer
     {
@@ -100,10 +100,12 @@ namespace Ghpp.Visualization
             sb.Append("<div class=\"viz\">");
             AppendTimeAxis(sb, ctx);
             AppendHighway(sb, chart, ctx);
+            // Bar curves sit immediately right of the highway so values can be
+            // read at-a-glance against the notes they describe.
+            AppendBarCurve(sb, "Fret", report.FretCurve, "#5FAFE0", ctx, options.BarCurveWidthPx);
+            AppendBarCurve(sb, "Strum", report.StrumCurve, "#E0C000", ctx, options.BarCurveWidthPx);
+            AppendBarCurve(sb, "Sustain", report.SustainCurve, "#A080E0", ctx, options.BarCurveWidthPx);
             AppendPatterns(sb, chart, report, ctx);
-            AppendBarCurve(sb, "CBar", report.CBarCurve, "#5FAFE0", ctx, options.BarCurveWidthPx);
-            AppendBarCurve(sb, "SBar", report.SBarCurve, "#E0C000", ctx, options.BarCurveWidthPx);
-            AppendBarCurve(sb, "LBar", report.LBarCurve, "#A080E0", ctx, options.BarCurveWidthPx);
             AppendBarCurve(sb, "Composite", report.Curve, "#FF6090", ctx, options.CompositeCurveWidthPx);
             sb.Append("</div>");
 
@@ -134,9 +136,9 @@ namespace Ghpp.Visualization
             sb.Append("<div class=\"stats\">");
             AppendStat(sb, "★ stars", report.StarRating.ToString("0.00", CultureInfo.InvariantCulture));
             AppendStat(sb, "blended", report.Blended.ToString("0.00", CultureInfo.InvariantCulture));
-            AppendStat(sb, "CBar", report.CBarMean.ToString("0.000", CultureInfo.InvariantCulture));
-            AppendStat(sb, "SBar", report.SBarMean.ToString("0.000", CultureInfo.InvariantCulture));
-            AppendStat(sb, "LBar", report.LBarMean.ToString("0.000", CultureInfo.InvariantCulture));
+            AppendStat(sb, "Fret", report.FretMean.ToString("0.000", CultureInfo.InvariantCulture));
+            AppendStat(sb, "Strum", report.StrumMean.ToString("0.000", CultureInfo.InvariantCulture));
+            AppendStat(sb, "Sustain", report.SustainMean.ToString("0.000", CultureInfo.InvariantCulture));
             AppendStat(sb, "notes", report.TotalNotes.ToString(CultureInfo.InvariantCulture));
             AppendStat(sb, "duration", report.DurationSeconds.ToString("0.0", CultureInfo.InvariantCulture) + "s");
             sb.Append("</div></header>");
@@ -399,23 +401,68 @@ namespace Ghpp.Visualization
         {
             var values = curve.Values;
             var max = 0.0;
-            foreach (var v in values)
+            var sum = 0.0;
+            var peakIndex = -1;
+            for (var i = 0; i < values.Length; i++)
             {
-                if (v > max) max = v;
+                var v = values[i];
+                sum += v;
+                if (v > max)
+                {
+                    max = v;
+                    peakIndex = i;
+                }
             }
-            if (max <= 0) max = 1.0;
+            var mean = values.Length > 0 ? sum / values.Length : 0.0;
+            var displayMax = max > 0 ? max : 1.0;
 
             sb.Append("<svg class=\"curve\" width=\"").Append(width)
               .Append("\" height=\"").Append(ctx.TotalHeightPx).Append("\">");
 
-            // Header label (top of column).
-            sb.Append("<text x=\"6\" y=\"16\" class=\"col-header\" style=\"fill:")
-              .Append(color).Append("\">").Append(label)
-              .Append(" <tspan class=\"max\">max ")
-              .Append(max.ToString("0.0", CultureInfo.InvariantCulture)).Append("</tspan></text>");
+            // Header (top of column): name + mean + max.
+            sb.Append("<text x=\"").Append(width / 2)
+              .Append("\" y=\"14\" class=\"col-header\" style=\"fill:")
+              .Append(color).Append("\">").Append(label).Append("</text>");
+            sb.Append("<text x=\"").Append(width / 2)
+              .Append("\" y=\"28\" class=\"col-stat\">")
+              .Append("μ ").Append(mean.ToString("0.00", CultureInfo.InvariantCulture))
+              .Append("  ↑").Append(max.ToString("0.00", CultureInfo.InvariantCulture))
+              .Append("</text>");
 
-            // Time gridlines
+            // Value-axis reference rules (vertical) at 25/50/75/100% of max,
+            // with numeric labels along the top of the body so users can read
+            // a sample's magnitude from its x-position.
+            var bodyTop = ctx.Options.ColumnHeaderHeightPx;
+            if (max > 0)
+            {
+                var fractions = new[] { 0.25, 0.50, 0.75, 1.0 };
+                foreach (var frac in fractions)
+                {
+                    var x = frac * (width - 2);
+                    sb.Append("<line x1=\"").Append(x.ToString("0.0", CultureInfo.InvariantCulture))
+                      .Append("\" x2=\"").Append(x.ToString("0.0", CultureInfo.InvariantCulture))
+                      .Append("\" y1=\"").Append(bodyTop)
+                      .Append("\" y2=\"").Append(ctx.TotalHeightPx)
+                      .Append("\" class=\"value-rule\"/>");
+                    var labelValue = frac * max;
+                    var labelX = frac < 1.0
+                        ? x + 2
+                        : x - 2; // last label hugs the right edge
+                    var anchor = frac < 1.0 ? "start" : "end";
+                    sb.Append("<text x=\"").Append(labelX.ToString("0.0", CultureInfo.InvariantCulture))
+                      .Append("\" y=\"").Append(bodyTop - 2)
+                      .Append("\" class=\"value-tick\" style=\"text-anchor:").Append(anchor).Append("\">")
+                      .Append(labelValue.ToString("0.0", CultureInfo.InvariantCulture))
+                      .Append("</text>");
+                }
+            }
+
+            // Time gridlines + per-gridline numeric value annotations.
+            // Showing values at each time tick lets the user scroll the track
+            // and read the magnitude of each axis at a glance — no hover.
             var tick = ctx.Options.TimeAxisTickSeconds;
+            var gridSampleRate = curve.SampleRateHz > 0 ? curve.SampleRateHz : 10.0;
+            var gridCurveStart = curve.StartTimeSeconds;
             for (var t = Math.Ceiling(ctx.StartTime / tick) * tick; t <= ctx.EndTime; t += tick)
             {
                 var y = ctx.Y(t);
@@ -423,6 +470,20 @@ namespace Ghpp.Visualization
                   .Append("\" y1=\"").Append(y.ToString("0.0", CultureInfo.InvariantCulture))
                   .Append("\" y2=\"").Append(y.ToString("0.0", CultureInfo.InvariantCulture))
                   .Append("\" class=\"gridline\"/>");
+
+                if (values.Length > 0)
+                {
+                    var sampleIndex = (int)Math.Round((t - gridCurveStart) * gridSampleRate);
+                    if (sampleIndex >= 0 && sampleIndex < values.Length)
+                    {
+                        var v = values[sampleIndex];
+                        sb.Append("<text x=\"").Append(width - 4)
+                          .Append("\" y=\"").Append((y - 2).ToString("0.0", CultureInfo.InvariantCulture))
+                          .Append("\" class=\"grid-value\" style=\"fill:").Append(color).Append("\">")
+                          .Append(v.ToString("0.0", CultureInfo.InvariantCulture))
+                          .Append("</text>");
+                    }
+                }
             }
 
             if (values.Length > 0)
@@ -441,7 +502,7 @@ namespace Ghpp.Visualization
                 sb.Append("M0,").Append(firstY.ToString("0.0", CultureInfo.InvariantCulture));
                 for (var i = values.Length - 1; i >= 0; i--)
                 {
-                    var x = (values[i] / max) * (width - 2);
+                    var x = (values[i] / displayMax) * (width - 2);
                     var y = ctx.Y(curveStart + i / sampleRate);
                     sb.Append(" L").Append(x.ToString("0.0", CultureInfo.InvariantCulture))
                       .Append(',').Append(y.ToString("0.0", CultureInfo.InvariantCulture));
@@ -454,13 +515,51 @@ namespace Ghpp.Visualization
                 sb.Append("<path d=\"");
                 for (var i = values.Length - 1; i >= 0; i--)
                 {
-                    var x = (values[i] / max) * (width - 2);
+                    var x = (values[i] / displayMax) * (width - 2);
                     var y = ctx.Y(curveStart + i / sampleRate);
                     sb.Append(i == values.Length - 1 ? "M" : " L")
                       .Append(x.ToString("0.0", CultureInfo.InvariantCulture))
                       .Append(',').Append(y.ToString("0.0", CultureInfo.InvariantCulture));
                 }
                 sb.Append("\" stroke=\"").Append(color).Append("\" stroke-width=\"1.5\" fill=\"none\"/>");
+
+                // Per-sample hover targets — one transparent horizontal strip
+                // per sample so the browser shows a native tooltip with the
+                // exact (time, value) on mouseover. Cheap, no JS required.
+                var stripHeight = Math.Max(1.0, ctx.Options.PixelsPerSecond / sampleRate);
+                for (var i = 0; i < values.Length; i++)
+                {
+                    var sampleTime = curveStart + i / sampleRate;
+                    var y = ctx.Y(sampleTime);
+                    sb.Append("<rect x=\"0\" y=\"")
+                      .Append((y - stripHeight / 2).ToString("0.0", CultureInfo.InvariantCulture))
+                      .Append("\" width=\"").Append(width)
+                      .Append("\" height=\"").Append(stripHeight.ToString("0.0", CultureInfo.InvariantCulture))
+                      .Append("\" fill=\"transparent\"><title>")
+                      .Append(label).Append(' ')
+                      .Append(values[i].ToString("0.000", CultureInfo.InvariantCulture))
+                      .Append(" @ ")
+                      .Append(sampleTime.ToString("0.00", CultureInfo.InvariantCulture))
+                      .Append("s</title></rect>");
+                }
+
+                // Peak annotation: small dot + numeric label at the highest sample.
+                if (peakIndex >= 0 && max > 0)
+                {
+                    var px = (values[peakIndex] / displayMax) * (width - 2);
+                    var py = ctx.Y(curveStart + peakIndex / sampleRate);
+                    sb.Append("<circle cx=\"").Append(px.ToString("0.0", CultureInfo.InvariantCulture))
+                      .Append("\" cy=\"").Append(py.ToString("0.0", CultureInfo.InvariantCulture))
+                      .Append("\" r=\"2.5\" fill=\"").Append(color).Append("\"/>");
+                    // Place the label to the left of the peak so it doesn't
+                    // overflow the column when the peak hugs the right edge.
+                    var labelX = Math.Max(2.0, px - 4);
+                    sb.Append("<text x=\"").Append(labelX.ToString("0.0", CultureInfo.InvariantCulture))
+                      .Append("\" y=\"").Append((py - 4).ToString("0.0", CultureInfo.InvariantCulture))
+                      .Append("\" class=\"peak-label\" style=\"fill:").Append(color).Append("\">")
+                      .Append(max.ToString("0.00", CultureInfo.InvariantCulture))
+                      .Append("</text>");
+                }
             }
 
             sb.Append("</svg>");
@@ -553,6 +652,13 @@ header .sub { color: #8A8A92; margin-top: 2px; }
 .col-header { fill: #C0C0C8; font-size: 11px; font-weight: 600; text-anchor: middle; }
 .lane-header { font-size: 13px; }
 .col-header .max { fill: #6A6A72; font-weight: normal; font-size: 10px; }
+.col-stat { fill: #8A8A92; font-size: 10px; text-anchor: middle; }
+.value-rule { stroke: #20202A; stroke-width: 0.5; stroke-dasharray: 2 3; }
+.value-tick { fill: #6A6A72; font-size: 9px; }
+.grid-value { font-size: 10px; font-weight: 600; text-anchor: end; paint-order: stroke;
+              stroke: #0F0F14; stroke-width: 3; stroke-linejoin: round; opacity: 0.92; }
+.peak-label { font-size: 10px; font-weight: 600; text-anchor: end; paint-order: stroke;
+              stroke: #0F0F14; stroke-width: 3; stroke-linejoin: round; }
 .pattern-label { fill: #0F0F14; font-size: 10px; font-weight: 600; text-anchor: end; }
 ";
     }

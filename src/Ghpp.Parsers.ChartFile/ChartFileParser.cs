@@ -110,6 +110,8 @@ public sealed class ChartFileParser : IChartFileParser
 
             var frets = Frets.None;
             var sustainTicks = 0;
+            var perFretTicks = new int[5];
+            var openSustainTicks = 0;
             var hasOpen = false;
             var hasFret = false;
             var isForced = false;
@@ -123,22 +125,27 @@ public sealed class ChartFileParser : IChartFileParser
                     case LaneGreen:
                         frets |= Frets.Green;
                         hasFret = true;
+                        if (entry.SustainTicks > perFretTicks[0]) perFretTicks[0] = entry.SustainTicks;
                         break;
                     case LaneRed:
                         frets |= Frets.Red;
                         hasFret = true;
+                        if (entry.SustainTicks > perFretTicks[1]) perFretTicks[1] = entry.SustainTicks;
                         break;
                     case LaneYellow:
                         frets |= Frets.Yellow;
                         hasFret = true;
+                        if (entry.SustainTicks > perFretTicks[2]) perFretTicks[2] = entry.SustainTicks;
                         break;
                     case LaneBlue:
                         frets |= Frets.Blue;
                         hasFret = true;
+                        if (entry.SustainTicks > perFretTicks[3]) perFretTicks[3] = entry.SustainTicks;
                         break;
                     case LaneOrange:
                         frets |= Frets.Orange;
                         hasFret = true;
+                        if (entry.SustainTicks > perFretTicks[4]) perFretTicks[4] = entry.SustainTicks;
                         break;
                     case LaneForce:
                         isForced = true;
@@ -148,6 +155,7 @@ public sealed class ChartFileParser : IChartFileParser
                         break;
                     case LaneOpen:
                         hasOpen = true;
+                        if (entry.SustainTicks > openSustainTicks) openSustainTicks = entry.SustainTicks;
                         break;
                 }
                 if (IsPlayableLane(entry.Lane) && entry.SustainTicks > sustainTicks)
@@ -165,8 +173,10 @@ public sealed class ChartFileParser : IChartFileParser
                     // Tick had only modifier flags. Skip.
                     continue;
                 case false:
-                    // Explicit open: clear stray fret bits.
+                    // Explicit open: clear stray fret bits and per-fret sustains.
                     frets = Frets.None;
+                    Array.Clear(perFretTicks, 0, perFretTicks.Length);
+                    sustainTicks = openSustainTicks;
                     break;
             }
 
@@ -174,9 +184,19 @@ public sealed class ChartFileParser : IChartFileParser
             var sustainSeconds = sustainTicks > 0
                 ? clock.TickToSeconds(tick + sustainTicks) - time
                 : 0.0;
+
+            var perFretSeconds = new double[5];
+            for (var k = 0; k < 5; k++)
+            {
+                if (perFretTicks[k] > 0)
+                {
+                    perFretSeconds[k] = clock.TickToSeconds(tick + perFretTicks[k]) - time;
+                }
+            }
+
             var type = NoteClassifier.Classify(tick, frets, isForced, isTap, previous, hopoThresholdTicks);
 
-            var note = new Note(tick, time, frets, sustainTicks, sustainSeconds, type);
+            var note = new Note(tick, time, frets, sustainTicks, sustainSeconds, type, perFretSeconds);
             notes.Add(note);
             previous = note;
         }

@@ -63,11 +63,15 @@ namespace Ghpp.Core.Patterns.Detectors
             int prevFret = -1;
             int prevDir = 0;
             int directionChanges = 0;
+            int firstFret = -1;
+            bool pastFirstReversal = false;
+            bool completedCycle = false;
 
             for (var k = startIndex; k <= endIndex; k++)
             {
                 var f = PatternHelpers.SingleFretIndex(notes[k]);
                 if (f < 0) return false;
+                if (firstFret < 0) firstFret = f;
                 distinctMask |= 1 << f;
                 if (f < low) low = (byte)f;
                 if (f > high) high = (byte)f;
@@ -75,13 +79,19 @@ namespace Ghpp.Core.Patterns.Detectors
                 {
                     var step = f - prevFret;
                     var dir = step > 0 ? 1 : (step < 0 ? -1 : 0);
-                    if (dir != 0 && prevDir != 0 && dir != prevDir) directionChanges++;
+                    if (dir != 0 && prevDir != 0 && dir != prevDir)
+                    {
+                        directionChanges++;
+                        pastFirstReversal = true;
+                    }
                     if (dir != 0) prevDir = dir;
                 }
+                if (pastFirstReversal && f == firstFret) completedCycle = true;
                 prevFret = f;
             }
 
             if (directionChanges < 1) return false;
+            if (!completedCycle) return false;
 
             var distinct = PopCount(distinctMask);
             if (distinct < options.MinZigDistinctFrets) return false;
