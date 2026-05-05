@@ -28,11 +28,22 @@ namespace Ghpp.Core.Models
         /// <summary>Per-strum baseline contribution. Floor that keeps StrumComplexity non-zero through static-rhythm sections.</summary>
         public double StrumBaselineContribution { get; set; } = 0.15;
 
-        /// <summary>Per-note bonus cap (0..1).</summary>
-        public double StrumMaxBonus { get; set; } = 1.0;
+        /// <summary>
+        /// Per-note bonus cap. The contribution scales between baseline and
+        /// this cap as rhythm variety increases. Default 0.85 leaves headroom
+        /// over the typical ~0.6 saturation point for genuinely chaotic
+        /// rhythms while keeping uniform strumming firmly at baseline.
+        /// </summary>
+        public double StrumMaxBonus { get; set; } = 0.85;
 
-        /// <summary>Saturation constant for the bonus curve: bonus = max·(1 − e^(−boundaries/k)).</summary>
-        public double StrumSaturationK { get; set; } = 2.0;
+        /// <summary>
+        /// Saturation constant for the bonus curve: bonus = max·(1 − e^(−boundaries/k)).
+        /// Higher k = bonus accumulates more slowly so genuinely complex
+        /// passages differentiate from mildly-varied ones. Default 5.0 spreads
+        /// the response across the full 0..7 boundaries-in-window range
+        /// (1 boundary ≈ 18% of max bonus, 7 ≈ 75%).
+        /// </summary>
+        public double StrumSaturationK { get; set; } = 5.0;
 
         // The following stream-dampener constants are reserved for future
         // re-introduction once anchors/pivots are calibrated. They are not
@@ -54,34 +65,67 @@ namespace Ghpp.Core.Models
         /// </summary>
         public double[] FretJumpCost { get; set; } = new double[] { 0.00, 0.10, 0.25, 0.50, 0.80 };
 
-        /// <summary>
-        /// Per-held-fret intrinsic cost contribution (frets-and-gaps model).
-        /// A chord's intrinsic difficulty is <c>PerHeld × popcount(F) + PerGap × gapCount(F)</c>.
-        /// </summary>
-        public double FretIntrinsicPerHeld { get; set; } = 0.05;
+        // ---- Chord intrinsic difficulty (shape cost, no transition) -----------
+        // The intrinsic cost of a chord shape is the sum of:
+        //   * per-fret placement (lone vs run-extending),
+        //   * per-position interior gap cost,
+        //   * a barre cost when all 5 frets are held,
+        //   * an outer-pair reduction when only the bottom + top frets are
+        //     held with at least one gap between them.
+        // FretComplexity calls this with <c>currChanged</c> (the newly-pressed
+        // subset) so anchored frets contribute nothing to formation cost.
 
         /// <summary>
-        /// Per-gap intrinsic cost contribution. A "gap" is a fret index between
-        /// the lowest and highest held that is itself not held (e.g., GO has
-        /// 3 gaps: R, Y, B). Higher than <see cref="FretIntrinsicPerHeld"/>
-        /// because gaps stretch the hand more than additional adjacent frets.
+        /// Per-fret cost when the held fret has no held neighbor immediately
+        /// below it — i.e., the fret is the bottom of a new "run" of consecutive
+        /// held frets.
         /// </summary>
-        public double FretIntrinsicPerGap { get; set; } = 0.10;
+        public double ChordFretLone { get; set; } = 1.0;
 
         /// <summary>
-        /// Multiplicative discount applied to hand-shift + chord-toggle costs
-        /// when a chord-to-chord transition has at least one shared finger
-        /// (a pivot). Default 0.5 = 50% discount when a pivot is available.
-        /// HOPO/Tap notes never pivot (anchors only).
+        /// Per-fret cost when the held fret extends a consecutive run (its
+        /// lower neighbor is also held). Lower than <see cref="ChordFretLone"/>
+        /// because adjacent fingers form a natural compact hand position.
         /// </summary>
-        public double FretPivotDiscount { get; set; } = 0.5;
+        public double ChordFretRun { get; set; } = 0.5;
 
         /// <summary>
-        /// Per-extra-finger-toggle cost for chord transitions. A simple
-        /// single-fret change always involves 2 finger toggles (one off, one
-        /// on); this constant adds cost for each toggle beyond that.
+        /// Per-position cost of an interior unheld fret (a "gap"). Indexed by
+        /// fret position 0..4 (G, R, Y, B, O). Center gap (Y) is hardest to
+        /// span; G and O are endpoints and cannot be gaps.
         /// </summary>
-        public double FretPerExtraToggleCost { get; set; } = 0.12;
+        public double[] ChordGapCost { get; set; } = new double[] { 0.0, 0.5, 1.0, 0.5, 0.0 };
+
+        /// <summary>
+        /// Flat addition when all 5 frets are held. The player has only 4
+        /// fingers, so a 5-fret chord requires barring or thumb use on top of
+        /// the per-fret math.
+        /// </summary>
+        public double ChordBarreCost { get; set; } = 1.0;
+
+        /// <summary>
+        /// Flat reduction when only the bottom and top frets are held with at
+        /// least one gap between them (an "outer-pair" chord, e.g., GO, GB,
+        /// RB). Such chords are pure stretch — no interior fingers are doing
+        /// coordination work, only the hand opening matters.
+        /// </summary>
+        public double ChordOuterPairReduction { get; set; } = 0.5;
+
+        /// <summary>
+        /// Multiplicative discount applied to action + hand-shift costs
+        /// whenever a transition has at least one shared (anchored or
+        /// pivoted) finger between prev and curr effective frets. The shared
+        /// finger lets the player ignore some of the movement work. Applies
+        /// uniformly across Strum/HOPO/Tap.
+        /// </summary>
+        public double FretPivotDiscount { get; set; } = 0.7;
+
+        /// <summary>
+        /// Per-finger action cost. Every press and every release counts as
+        /// one action, weighted equally. Anchored frets (held in both prev
+        /// and curr effective sets) are not actions.
+        /// </summary>
+        public double ChordPerFingerActionCost { get; set; } = 0.25;
 
         // The following dampener / penalty constants are reserved for future
         // re-introduction. They are not applied by the current FretComplexity

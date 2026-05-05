@@ -7,31 +7,30 @@ using Ghpp.Core.Models;
 namespace Ghpp.Core.Bars
 {
     /// <summary>
-    /// Fret-hand complexity axis. Computes a per-note transition cost that
-    /// models, in order:
-    ///   * <b>Anchors</b> — frets shared between the previous and current note
-    ///     do not require movement. For HOPO/Tap notes, if every current fret
-    ///     was already held and no held fret sits above the new top, the note
-    ///     is free (cost 0).
-    ///   * <b>Chord intrinsic difficulty</b> (frets &amp; gaps) — a chord's
-    ///     cost rises with both the count of frets held and the gap count
-    ///     between them (e.g. GO &gt; GR despite both being 2-fret chords).
-    ///     The transition only charges the *increase* in chord cost.
-    ///   * <b>Hand shift</b> — the topmost <i>changed</i> fret's index delta
-    ///     drives a hand-movement cost via <see cref="DifficultyOptions.FretJumpCost"/>.
-    ///   * <b>Pivots</b> — when both prev and curr are chords sharing at least
-    ///     one finger, the player can pivot, applying
-    ///     <see cref="DifficultyOptions.FretPivotDiscount"/> to hand-shift +
-    ///     toggle costs. HOPO/Tap notes never pivot (anchors only).
-    ///   * <b>Chord toggle extras</b> — finger toggles beyond the natural two
-    ///     (one off, one on) of a single-fret change accumulate at
-    ///     <see cref="DifficultyOptions.FretPerExtraToggleCost"/>.
+    /// Fret-hand complexity axis. Each note's cost is the sum of:
+    ///   * <b>Chord intrinsic</b> of the player's resulting hand state minus
+    ///     the intrinsic of the anchored portion already held. See
+    ///     <see cref="ChordIntrinsic"/>.
+    ///   * <b>Action cost</b> — every press and every release counts as one
+    ///     action, weighted equally via
+    ///     <see cref="DifficultyOptions.ChordPerFingerActionCost"/>.
+    ///   * <b>Hand shift</b> — distance between the topmost released and
+    ///     topmost added fret, looked up in
+    ///     <see cref="DifficultyOptions.FretJumpCost"/>.
+    /// Action + hand-shift are then multiplied by
+    /// <see cref="DifficultyOptions.FretPivotDiscount"/> whenever any finger
+    /// is shared between prev and curr (an anchor or pivot lets the player
+    /// ignore that finger).
     /// </summary>
     /// <remarks>
+    /// For Strum chords (≥2 frets) the player's hand state matches the
+    /// chart chord exactly — no anchors retained. For single-fret Strums and
+    /// HOPO/Tap notes of any size, the player retains any prev-held fret at
+    /// or below the new curr top as an anchor; held frets above the new top
+    /// are released. Open notes clear the hand entirely, billing each
+    /// previously-held fret as a release action.
     /// Costs are written to <see cref="NoteContext.FretCost"/> and aggregated
-    /// into a 10 Hz time-series via the same edge-clipped sliding-window sum
-    /// used by the other Bars (see <see cref="DifficultyCurve.BuildSliding"/>).
-    /// Open notes and the very first note both produce 0 cost.
+    /// into a 10 Hz time-series via <see cref="DifficultyCurve.BuildSliding"/>.
     /// </remarks>
     internal static class FretComplexity
     {
@@ -59,136 +58,195 @@ namespace Ghpp.Core.Bars
         /// </summary>
         private static void ApplyCosts(IList<NoteContext> notes, DifficultyOptions options)
         {
-            // The "effective frets" track what the player is *actually*
-            // holding. A HOPO/Tap that didn't require movement leaves
-            // effective frets unchanged (player keeps anchors held).
+            // Precompute the chord intrinsic for every possible 5-fret mask
+            // so the per-note loop reduces to two array lookups + arithmetic.
+            var intrinsicTable = BuildIntrinsicTable(options);
+
+            // effectiveFrets tracks what the player is actually holding.
+            // For Strum notes the player must form the exact chart chord.
+            // For HOPO/Tap notes the player retains any prev-held fret at or
+            // below the new curr top as an anchor; held frets above the new
+            // top must be released so the curr top registers as highest.
             var effectiveFrets = Frets.None;
 
-            for (var i = 0; i < notes.Count; i++)
+            foreach (var curr in notes)
             {
-                var curr = notes[i];
+                var prevEff = (byte)effectiveFrets;
+                var currChart = (byte)curr.Source.Frets;
 
-                if (i == 0 || curr.Source.IsOpen || effectiveFrets == Frets.None)
+                // Resolve the player's hand state after this note.
+                //   * Open notes clear the hand (every held fret released).
+                //   * Strum chords (≥2 frets) force exact chart shape.
+                //   * Everything else lets the player retain prev-held frets
+                //     at or below the curr top as an anchor.
+                byte currEff;
+                if (curr.Source.IsOpen)
                 {
-                    curr.FretCost = 0.0;
-                    effectiveFrets = curr.Source.Frets;
-                    continue;
+                    currEff = 0;
                 }
-
-                var prevByte = (byte)effectiveFrets;
-                var currByte = (byte)curr.Source.Frets;
-
-                // ---- Anchor free-pass for HOPO/Tap -------------------------
-                // When all curr frets are already held *and* no held fret sits
-                // above the new topmost fret, the player doesn't move. This
-                // is the canonical "HOPO/Tap on top of an anchor" situation
-                // (e.g. holding GR, the chart says R: just tap red).
-                if (curr.Source.Type != NoteType.Strum)
+                else if (curr.Source.Type == NoteType.Strum && PopCount(currChart) > 1)
                 {
-                    var allHeld = (currByte & prevByte) == currByte;
+                    currEff = currChart;
+                }
+                else
+                {
                     var currTop = curr.FretPosition;
-                    var aboveMask = currTop >= 0 ? (byte)(0xFF << (currTop + 1)) : (byte)0;
-                    var heldAbove = (prevByte & aboveMask) != 0;
-                    if (allHeld && !heldAbove)
-                    {
-                        curr.FretCost = 0.0;
-                        // effectiveFrets unchanged — player still holds prev set.
-                        continue;
-                    }
+                    var belowMask = currTop >= 0 ? (byte)((1 << (currTop + 1)) - 1) : (byte)0;
+                    var retained = (byte)(prevEff & belowMask);
+                    currEff = (byte)(retained | currChart);
                 }
 
-                // ---- Chord intrinsic delta ---------------------------------
-                // Only charge for the increase in chord-shape difficulty:
-                // moving from a hard chord (GYO) to a simple one (G) shouldn't
-                // cost anything in chord-intrinsic terms.
-                var intrinsicDelta = Math.Max(
-                    0.0,
-                    ChordIntrinsic(currByte, options) - ChordIntrinsic(prevByte, options));
+                var shared = (byte)(prevEff & currEff);
+                var released = (byte)(prevEff & ~currEff);
+                var added = (byte)(currEff & ~prevEff);
 
-                // ---- Hand-shift cost (anchor stripping) --------------------
-                // Anchored frets (shared between prev and curr) don't move.
-                // The hand-shift cost is driven by the topmost *changed* fret.
-                var shared = (byte)(prevByte & currByte);
-                var prevChanged = (byte)(prevByte & ~shared);
-                var currChanged = (byte)(currByte & ~shared);
+                // Full chord intrinsic of the resulting hand, minus the part
+                // already held (anchor relief). Pure intrinsic function; the
+                // discount lives here in the caller, not inside ChordIntrinsic.
+                var chordCost = intrinsicTable[currEff] - intrinsicTable[shared];
 
-                var prevChangedTop = TopBit(prevChanged);
-                var currChangedTop = TopBit(currChanged);
-                var shiftDistance = (prevChangedTop >= 0 && currChangedTop >= 0)
-                    ? Math.Abs(currChangedTop - prevChangedTop)
+                // Symmetric per-finger action cost: every press and every
+                // release is one action.
+                var actionCount = PopCount(released) + PopCount(added);
+                var actionCost = actionCount * options.ChordPerFingerActionCost;
+
+                // Hand shift between the topmost released and topmost added
+                // fret. If only one side has changed bits (pure add or pure
+                // release), there is no hand-center movement to charge.
+                var releasedTop = TopBit(released);
+                var addedTop = TopBit(added);
+                var shiftDistance = (releasedTop >= 0 && addedTop >= 0)
+                    ? Math.Abs(addedTop - releasedTop)
                     : 0;
                 var handShiftCost = LookupJumpCost(shiftDistance, options.FretJumpCost);
 
-                // ---- Chord toggle extras -----------------------------------
-                // Each finger that toggles between prev and curr is one
-                // action. A single-fret change always involves 2 toggles
-                // (one off + one on); extras measure multi-fret coordination.
-                var toggles = PopCount((byte)(prevByte ^ currByte));
-                var extraToggles = Math.Max(0, toggles - 2);
-                var chordToggleCost = extraToggles * options.FretPerExtraToggleCost;
-
-                // ---- Pivot discount ----------------------------------------
-                // Chord-only: when both prev and curr are chords (≥2 frets)
-                // and they share at least one finger, the player can pivot off
-                // the shared finger. HOPO/Tap notes do NOT get the pivot —
-                // pivoting requires the strum hand to coordinate.
-                var movementCost = handShiftCost + chordToggleCost;
-                if (curr.Source.Type == NoteType.Strum
-                    && PopCount(prevByte) >= 2
-                    && PopCount(currByte) >= 2
-                    && shared != 0)
-                {
+                // Any shared finger (anchor or pivot) discounts the movement
+                // work because the player can ignore that finger.
+                var movementCost = actionCost + handShiftCost;
+                if (shared != 0)
                     movementCost *= options.FretPivotDiscount;
-                }
 
-                curr.FretCost = intrinsicDelta + movementCost;
-                effectiveFrets = curr.Source.Frets;
+                curr.FretCost = chordCost + movementCost;
+                effectiveFrets = (Frets)currEff;
             }
         }
 
         /// <summary>
-        /// Chord intrinsic difficulty: <c>PerHeld × popcount(F) + PerGap × gapCount(F)</c>.
-        /// Open / single-fret returns based on PerHeld only (0 gaps). For chords,
-        /// gaps = (highestFretIndex − lowestFretIndex + 1) − popcount(F).
+        /// Chord intrinsic difficulty for the given fret mask. Sums four
+        /// physical contributions: per-fret placement (lone vs extending a
+        /// consecutive run), per-position interior gap cost, a flat barre cost
+        /// when all 5 frets are held, and an outer-pair reduction when only
+        /// the bottom + top frets are held with a gap between them.
         /// </summary>
         private static double ChordIntrinsic(byte frets, DifficultyOptions options)
         {
-            if (frets == 0) return 0.0;
-            var held = PopCount(frets);
-            var top = TopBit(frets);
+            if (frets == 0)
+                return 0.0;
+
+            var fingers = PopCount(frets);
             var bottom = BottomBit(frets);
-            var span = top - bottom + 1;
-            var gaps = span - held;
-            return options.FretIntrinsicPerHeld * held + options.FretIntrinsicPerGap * gaps;
+            var top = TopBit(frets);
+
+            // Per-fret cost
+            // A held fret extends a run if its lower neighbor is also held.
+            var runCount = PopCount((byte)(frets & (frets << 1)));
+            
+            var loneCount = fingers - runCount;
+            var fretCost = loneCount * options.ChordFretLone
+                         + runCount * options.ChordFretRun;
+
+            // Interior unheld frets, weighted by which position they sit at.
+            var gapCost = 0.0;
+            for (var i = bottom + 1; i < top; i++)
+            {
+                if ((frets & (1 << i)) == 0)
+                    gapCost += options.ChordGapCost[i];
+            }
+
+            var cost = fretCost + gapCost;
+            switch (fingers)
+            {
+                case 5:
+                    cost += options.ChordBarreCost;
+                    break;
+                case 2 when gapCost > 0.0:
+                    cost -= options.ChordOuterPairReduction;
+                    break;
+            }
+
+            return cost;
         }
 
-        private static int TopBit(byte bits)
+        // Precomputed bit-op lookup tables. Every byte mask collapses to a
+        // single array index, so the per-note hot loop never runs the
+        // bit-by-bit loops at runtime.
+        private static readonly int[] TopBitByMask = BuildTopBitTable();
+        private static readonly int[] BottomBitByMask = BuildBottomBitTable();
+        private static readonly int[] PopCountByMask = BuildPopCountTable();
+
+        private static int[] BuildTopBitTable()
         {
-            if (bits == 0) return -1;
-            var pos = -1;
-            while (bits != 0) { pos++; bits >>= 1; }
-            return pos;
+            var table = new int[256];
+            for (var i = 0; i < 256; i++)
+            {
+                var pos = -1;
+                var bits = i;
+                while (bits != 0) { pos++; bits >>= 1; }
+                table[i] = pos;
+            }
+            return table;
         }
 
-        private static int BottomBit(byte bits)
+        private static int[] BuildBottomBitTable()
         {
-            if (bits == 0) return -1;
-            var pos = 0;
-            while ((bits & 1) == 0) { pos++; bits >>= 1; }
-            return pos;
+            var table = new int[256];
+            table[0] = -1;
+            for (var i = 1; i < 256; i++)
+            {
+                var pos = 0;
+                var bits = i;
+                while ((bits & 1) == 0) { pos++; bits >>= 1; }
+                table[i] = pos;
+            }
+            return table;
         }
+
+        private static int[] BuildPopCountTable()
+        {
+            var table = new int[256];
+            for (var i = 0; i < 256; i++)
+            {
+                var n = 0;
+                var bits = i;
+                while (bits != 0) { n += bits & 1; bits >>= 1; }
+                table[i] = n;
+            }
+            return table;
+        }
+
+        /// <summary>
+        /// Build a 32-entry chord intrinsic table for the given options.
+        /// Chord masks only use 5 bits (G, R, Y, B, O), so a single
+        /// precomputed table eliminates per-note ChordIntrinsic calls.
+        /// </summary>
+        private static double[] BuildIntrinsicTable(DifficultyOptions options)
+        {
+            var table = new double[32];
+            for (var mask = 0; mask < 32; mask++)
+                table[mask] = ChordIntrinsic((byte)mask, options);
+            return table;
+        }
+
+        private static int TopBit(byte bits) => TopBitByMask[bits];
+
+        private static int BottomBit(byte bits) => BottomBitByMask[bits];
+
+        private static int PopCount(byte b) => PopCountByMask[b];
 
         private static double LookupJumpCost(int distance, double[] table)
         {
             if (distance < 0 || table == null || distance >= table.Length) return 0.0;
             return table[distance];
-        }
-
-        private static int PopCount(byte b)
-        {
-            var n = 0;
-            while (b != 0) { n += b & 1; b >>= 1; }
-            return n;
         }
     }
 }

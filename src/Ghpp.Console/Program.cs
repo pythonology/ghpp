@@ -207,9 +207,9 @@ static void PrintBarCurves(DifficultyReport report)
 {
     AnsiConsole.WriteLine();
     AnsiConsole.Write(new Rule("[grey]Bar curves[/]").LeftJustified().RuleStyle("grey"));
-    PrintMiniCurve("Fret", report.FretCurve.Values, "skyblue1");
-    PrintMiniCurve("Strum", report.StrumCurve.Values, "yellow");
-    PrintMiniCurve("Sustain", report.SustainCurve.Values, "mediumpurple");
+    PrintMiniCurve("Fret", report.FretComplexityCurve.Values, "skyblue1");
+    PrintMiniCurve("Strum", report.StrumComplexityCurve.Values, "yellow");
+    PrintMiniCurve("Sustain", report.SustainComplexityCurve.Values, "mediumpurple");
 }
 
 static void PrintMiniCurve(string label, double[] values, string color)

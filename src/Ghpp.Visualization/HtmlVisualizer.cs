@@ -102,9 +102,9 @@ namespace Ghpp.Visualization
             AppendHighway(sb, chart, ctx);
             // Bar curves sit immediately right of the highway so values can be
             // read at-a-glance against the notes they describe.
-            AppendBarCurve(sb, "Fret", report.FretCurve, "#5FAFE0", ctx, options.BarCurveWidthPx);
-            AppendBarCurve(sb, "Strum", report.StrumCurve, "#E0C000", ctx, options.BarCurveWidthPx);
-            AppendBarCurve(sb, "Sustain", report.SustainCurve, "#A080E0", ctx, options.BarCurveWidthPx);
+            AppendBarCurve(sb, "Fret", report.FretComplexityCurve, "#5FAFE0", ctx, options.BarCurveWidthPx);
+            AppendBarCurve(sb, "Strum", report.StrumComplexityCurve, "#E0C000", ctx, options.BarCurveWidthPx);
+            AppendBarCurve(sb, "Sustain", report.SustainComplexityCurve, "#A080E0", ctx, options.BarCurveWidthPx);
             AppendPatterns(sb, chart, report, ctx);
             AppendBarCurve(sb, "Composite", report.Curve, "#FF6090", ctx, options.CompositeCurveWidthPx);
             sb.Append("</div>");

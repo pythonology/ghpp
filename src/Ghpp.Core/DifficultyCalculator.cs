@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Ghpp.Core.Abstractions;
 using Ghpp.Core.Aggregation;
 using Ghpp.Core.Bars;
@@ -40,16 +41,24 @@ namespace Ghpp.Core
             // Common time grid shared by every Bar so the curves line up.
             DifficultyCurve.ComputeTimeGrid(notes, options, out var startTime, out var sampleCount);
 
-            var fretCurve = FretComplexity.Build(notes, options, startTime, sampleCount);
-            var strumCurve = StrumComplexity.Build(notes, options, startTime, sampleCount);
-            var sustainCurve = SustainComplexity.Build(notes, options, startTime, sampleCount);
+            // The three Bar evaluators are independent CPU-bound passes:
+            // each iterates the same notes list, writes its own per-note
+            // cost field on NoteContext, and produces an independent curve.
+            // No shared mutable state, so Parallel.Invoke is safe.
+            DifficultyCurve fretComplexityCurve = default;
+            DifficultyCurve strumComplexityCurve = default;
+            DifficultyCurve sustainComplexityCurve = default;
+            Parallel.Invoke(
+                () => fretComplexityCurve = FretComplexity.Build(notes, options, startTime, sampleCount),
+                () => strumComplexityCurve = StrumComplexity.Build(notes, options, startTime, sampleCount),
+                () => sustainComplexityCurve = SustainComplexity.Build(notes, options, startTime, sampleCount));
 
-            var composite = CompositeCurve.LpNorm(fretCurve, strumCurve, sustainCurve, options, startTime);
+            var composite = CompositeCurve.LpNorm(fretComplexityCurve, strumComplexityCurve, sustainComplexityCurve, options, startTime);
 
             var fretLaneNotes = CountPlayableUnits(notes);
             var aggregate = PercentileAggregator.Aggregate(composite.Values, fretLaneNotes, options);
 
-            return BuildReport(chart, notes, composite, fretCurve, strumCurve, sustainCurve, aggregate, fretLaneNotes, patternIndex);
+            return BuildReport(chart, notes, composite, fretComplexityCurve, strumComplexityCurve, sustainComplexityCurve, aggregate, fretLaneNotes, patternIndex);
         }
 
         private static List<NoteContext> WrapNotes(IReadOnlyList<Note> source)
@@ -74,9 +83,9 @@ namespace Ghpp.Core
             Chart chart,
             List<NoteContext> notes,
             DifficultyCurve composite,
-            DifficultyCurve fretCurve,
-            DifficultyCurve strumCurve,
-            DifficultyCurve sustainCurve,
+            DifficultyCurve fretComplexityCurve,
+            DifficultyCurve strumComplexityCurve,
+            DifficultyCurve sustainComplexityCurve,
             PercentileAggregator.Result aggregate,
             int fretLaneNotes,
             PatternIndex patterns)
@@ -106,16 +115,16 @@ namespace Ghpp.Core
             if (composite.Values.Length > 0) meanNps /= composite.Values.Length;
 
             var fretMean = 0.0;
-            foreach (var v in fretCurve.Values) fretMean += v;
-            if (fretCurve.Values.Length > 0) fretMean /= fretCurve.Values.Length;
+            foreach (var v in fretComplexityCurve.Values) fretMean += v;
+            if (fretComplexityCurve.Values.Length > 0) fretMean /= fretComplexityCurve.Values.Length;
 
             var strumMean = 0.0;
-            foreach (var v in strumCurve.Values) strumMean += v;
-            if (strumCurve.Values.Length > 0) strumMean /= strumCurve.Values.Length;
+            foreach (var v in strumComplexityCurve.Values) strumMean += v;
+            if (strumComplexityCurve.Values.Length > 0) strumMean /= strumComplexityCurve.Values.Length;
 
             var sustainMean = 0.0;
-            foreach (var v in sustainCurve.Values) sustainMean += v;
-            if (sustainCurve.Values.Length > 0) sustainMean /= sustainCurve.Values.Length;
+            foreach (var v in sustainComplexityCurve.Values) sustainMean += v;
+            if (sustainComplexityCurve.Values.Length > 0) sustainMean /= sustainComplexityCurve.Values.Length;
 
             var duration = 0.0;
             if (chart.Notes.Count > 0)
@@ -128,11 +137,11 @@ namespace Ghpp.Core
             return new DifficultyReport
             {
                 Curve = composite,
-                FretCurve = fretCurve,
+                FretComplexityCurve = fretComplexityCurve,
                 FretMean = fretMean,
-                StrumCurve = strumCurve,
+                StrumComplexityCurve = strumComplexityCurve,
                 StrumMean = strumMean,
-                SustainCurve = sustainCurve,
+                SustainComplexityCurve = sustainComplexityCurve,
                 SustainMean = sustainMean,
 
                 StarRating = aggregate.StarRating,
