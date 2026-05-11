@@ -48,8 +48,42 @@ namespace Ghpp.Core.Bars
                 weights[i] = notes[i].StrumContribution;
             }
 
-            return DifficultyCurve.BuildSliding(
+            var raw = DifficultyCurve.BuildSliding(
                 (IReadOnlyList<NoteContext>)notes, weights, options, startTime, sampleCount);
+
+            // Two-stage shaping:
+            //   1. Saturation rolloff: raw · (1 − e^(−raw/k)) dampens low
+            //      values quadratically at the bottom of the curve.
+            //   2. Power amplification: multiply by (raw / midpoint)^(p−1).
+            //      Below midpoint this multiplier is <1 (extra damping on
+            //      slow strumming); above midpoint it is >1 (amplifies
+            //      high-NPS strumming above what raw NPS alone would give).
+            // Net shape: slow strumming gets pushed lower, fast strumming
+            // gets pushed higher than the linear baseline — separating
+            // sparse picking from dense picking more aggressively.
+            var values = raw.Values;
+            var k = Math.Max(1e-9, options.StrumNpsSaturationK);
+            var midpoint = Math.Max(1e-9, options.StrumNpsMidpoint);
+            var amp = Math.Max(0.0, options.StrumNpsExponent - 1.0);
+            var floor = options.StrumNpsFloor;
+            var floorK = Math.Max(1e-9, options.StrumNpsFloorK);
+            for (var i = 0; i < values.Length; i++)
+            {
+                var v = values[i];
+                if (v <= 0)
+                {
+                    values[i] = 0;
+                    continue;
+                }
+                var saturated = v * (1.0 - Math.Exp(-v / k));
+                var multiplier = amp == 0.0 ? 1.0 : Math.Pow(v / midpoint, amp);
+                // Floor adds a saturating low-end bonus so slow strumming
+                // starts around ~floor instead of ~0. Saturates quickly so
+                // it doesn't pile on top of high-NPS values.
+                var floorContribution = floor * (1.0 - Math.Exp(-v / floorK));
+                values[i] = saturated * multiplier + floorContribution;
+            }
+            return raw;
         }
 
         private static void ApplyContributions(IList<NoteContext> notes, DifficultyOptions options)
@@ -84,19 +118,83 @@ namespace Ghpp.Core.Bars
                     CountChangeBoundaries(changeTimes, currentTime, options);
 
                 var rhythmFactor = 1.0 - Math.Exp(-totalBoundaries / options.StrumSaturationK);
-                n.StrumContribution = options.StrumBaselineContribution + bonusRange * rhythmFactor;
+                // Fret-change bonus: strums where the player must actually
+                // move a finger pay an extra per-note bump. The bonus
+                // scales with the Hamming distance of fret bits — a
+                // GR→YB switch (4 bits change) costs more than a G→R
+                // switch (2 bits change) because more fingers physically
+                // move at once. Normalized so a 2-bit change (single
+                // fret repositioning) equals 1× the base bonus.
+                //
+                // We don't count Held-compatible transitions (e.g. GRYBO
+                // → O → GRYBO) as fret changes since the player just
+                // holds the union chord throughout — no fingers move.
+                double fretChangeBonus = 0.0;
+                if (n.Source.Frets != n.PrevFrets
+                    && !IsHeldCompatible((byte) n.PrevFrets, (byte) n.Source.Frets))
+                {
+                    int hammingDistance = PopCountByte(
+                        (byte)((byte) n.Source.Frets ^ (byte) n.PrevFrets));
+                    fretChangeBonus = options.StrumFretChangeBonus * (hammingDistance / 2.0);
+                }
+                n.StrumContribution = options.StrumBaselineContribution
+                                    + bonusRange * rhythmFactor
+                                    + fretChangeBonus;
             }
         }
 
         /// <summary>
-        /// True when the note participates in the picking-rhythm signal: any
-        /// strum, plus HOPOs/Taps that share frets with the previous note (no
-        /// fret change → the HOPO/Tap mechanic can't fire → effectively a strum).
+        /// True when the note participates in the picking-rhythm signal:
+        /// only genuine Strum-type notes count. Same-fret HOPOs and Taps
+        /// do NOT count even when no fret change occurs — once the chord is
+        /// held (e.g. from the previous strum), subsequent same-fret HOPOs
+        /// and Taps fire automatically off the held state without requiring
+        /// the player to strum again. Treating them as effective strums
+        /// would double-count picking work the player isn't actually doing.
         /// </summary>
         private static bool IsEffectiveStrum(NoteContext n)
         {
-            if (n.Source.Type == NoteType.Strum) return true;
-            return n.Source.Frets == n.PrevFrets;
+            return n.Source.Type == NoteType.Strum;
+        }
+
+        /// <summary>Count set bits in a byte. Used for Hamming distance.</summary>
+        private static int PopCountByte(byte b)
+        {
+            int n = 0;
+            while (b != 0) { n += b & 1; b = (byte)(b >> 1); }
+            return n;
+        }
+
+        /// <summary>
+        /// True when two consecutive chord shapes can both be played without
+        /// the player changing fret state — i.e. there's a single held union
+        /// chord that fires each note correctly (matching top fret, with
+        /// any extra bits below each note's lowest pressed bit treated as
+        /// anchor-allowed). Mirrors the Held detection in FretComplexity:
+        /// GRYBO and O are held-compatible (hold GRYBO, O fires because
+        /// O is the top); GR and G are not (top differs); BO and YO are
+        /// not (B would be in the way for YO).
+        /// </summary>
+        private static bool IsHeldCompatible(byte prev, byte cur)
+        {
+            if (prev == 0 || cur == 0) return false; // open note — no fret bits to share
+            var union = (byte) (prev | cur);
+            return FiresFromHeld(prev, union) && FiresFromHeld(cur, union);
+        }
+
+        /// <summary>
+        /// True when note <paramref name="n"/> can fire while the chord
+        /// <paramref name="held"/> is being held: above n's lowest pressed
+        /// bit, the held chord must contain exactly n's bits.
+        /// </summary>
+        private static bool FiresFromHeld(byte n, byte held)
+        {
+            // Lowest set bit position of n.
+            int bottom = 0;
+            byte bits = n;
+            while ((bits & 1) == 0) { bottom++; bits = (byte)(bits >> 1); }
+            byte anchorMask = (byte) ((1 << bottom) - 1);
+            return (byte)(held & ~anchorMask) == n;
         }
 
         /// <summary>

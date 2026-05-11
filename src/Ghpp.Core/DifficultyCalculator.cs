@@ -45,20 +45,25 @@ namespace Ghpp.Core
             // each iterates the same notes list, writes its own per-note
             // cost field on NoteContext, and produces an independent curve.
             // No shared mutable state, so Parallel.Invoke is safe.
-            DifficultyCurve fretComplexityCurve = default;
+            FretComplexityResult fretResult = default;
             DifficultyCurve strumComplexityCurve = default;
-            DifficultyCurve sustainComplexityCurve = default;
             Parallel.Invoke(
-                () => fretComplexityCurve = FretComplexity.Build(notes, options, startTime, sampleCount),
-                () => strumComplexityCurve = StrumComplexity.Build(notes, options, startTime, sampleCount),
-                () => sustainComplexityCurve = SustainComplexity.Build(notes, options, startTime, sampleCount));
+                () => fretResult = FretComplexity.Build(notes, options, startTime, sampleCount),
+                () => strumComplexityCurve = StrumComplexity.Build(notes, options, startTime, sampleCount));
+            var fretComplexityCurve = fretResult.Curve;
+            var fretChunks = fretResult.Chunks;
+            var noteIsAnchor = fretResult.NoteIsAnchor;
+
+            // Sustain complexity is currently disabled; pass an empty curve so
+            // it does not contribute to the composite or the report.
+            var sustainComplexityCurve = new DifficultyCurve(new double[sampleCount], options.SampleRateHz, startTime);
 
             var composite = CompositeCurve.LpNorm(fretComplexityCurve, strumComplexityCurve, sustainComplexityCurve, options, startTime);
 
             var fretLaneNotes = CountPlayableUnits(notes);
             var aggregate = PercentileAggregator.Aggregate(composite.Values, fretLaneNotes, options);
 
-            return BuildReport(chart, notes, composite, fretComplexityCurve, strumComplexityCurve, sustainComplexityCurve, aggregate, fretLaneNotes, patternIndex);
+            return BuildReport(chart, notes, composite, fretComplexityCurve, strumComplexityCurve, sustainComplexityCurve, aggregate, fretLaneNotes, patternIndex, fretChunks, noteIsAnchor);
         }
 
         private static List<NoteContext> WrapNotes(IReadOnlyList<Note> source)
@@ -88,7 +93,9 @@ namespace Ghpp.Core
             DifficultyCurve sustainComplexityCurve,
             PercentileAggregator.Result aggregate,
             int fretLaneNotes,
-            PatternIndex patterns)
+            PatternIndex patterns,
+            IReadOnlyList<FretChunkRecord> fretChunks,
+            bool[] noteIsAnchor)
         {
             var strumCount = 0;
             var hopoCount = 0;
@@ -165,6 +172,8 @@ namespace Ghpp.Core
                 L5 = aggregate.L5,
 
                 Patterns = patterns,
+                FretChunks = fretChunks,
+                NoteIsAnchor = noteIsAnchor,
             };
         }
     }

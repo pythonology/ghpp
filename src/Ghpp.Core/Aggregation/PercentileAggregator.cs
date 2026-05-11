@@ -25,6 +25,10 @@ namespace Ghpp.Core.Aggregation
             public double Blended { get; set; }
             public double IntensityStars { get; set; }
             public double LengthBonus { get; set; }
+            // Diagnostic breakdown of LengthBonus into its three components.
+            public double LengthBonusBase { get; set; }
+            public double LengthBonusPeak { get; set; }
+            public double LengthBonusSustained { get; set; }
             public double StarRating { get; set; }
         }
 
@@ -47,9 +51,25 @@ namespace Ghpp.Core.Aggregation
                 ? Math.Pow(blended, options.StarsExponent) / options.StarsDivisor
                 : 0.0;
 
-            var lengthBonus = fretLaneNotes > 0
-                ? options.LengthBonusGain * Math.Log10(1.0 + fretLaneNotes / options.LengthLogBase)
+            // Length factor: shared log of note count, used by all three
+            // length-bonus components. Zero notes → zero bonus.
+            var lengthFactor = fretLaneNotes > 0
+                ? Math.Log10(1.0 + fretLaneNotes / options.LengthLogBase)
                 : 0.0;
+
+            // Three-component length bonus:
+            //   Base       — pure note-count signal (chart length alone).
+            //   Peak       — l5 × length: rewards holding high peaks across
+            //                a long chart. Models choke factor: one missed
+            //                peak in N is worse when N is large.
+            //   Sustained  — p93 × length: heavily rewards sustained high
+            //                density across long charts. p93 is the hardest
+            //                facet to fake — only charts that genuinely stay
+            //                hard for a long time get this bonus.
+            var lengthBonusBase      = options.LengthBonusGain     * lengthFactor;
+            var lengthBonusPeak      = options.PeakLengthGain      * l5  * lengthFactor;
+            var lengthBonusSustained = options.SustainedLengthGain * p93 * lengthFactor;
+            var lengthBonus = lengthBonusBase + lengthBonusPeak + lengthBonusSustained;
 
             return new Result
             {
@@ -60,6 +80,9 @@ namespace Ghpp.Core.Aggregation
                 Blended = blended,
                 IntensityStars = intensityStars,
                 LengthBonus = lengthBonus,
+                LengthBonusBase = lengthBonusBase,
+                LengthBonusPeak = lengthBonusPeak,
+                LengthBonusSustained = lengthBonusSustained,
                 StarRating = intensityStars + lengthBonus,
             };
         }

@@ -45,5 +45,21 @@ namespace Ghpp.Core.Models
 
         /// <summary>Per-note lookup of pattern memberships (trills, zigs, ladders, etc.).</summary>
         public PatternIndex Patterns { get; set; }
+
+        /// <summary>
+        /// Stream of fret-hand motion chunks produced by the FretComplexity Bar.
+        /// Each chunk classifies a contiguous run of notes (Free / Trill / RollOn
+        /// / RollOff / Zig) and carries the K-period repeat flag. Indices reference
+        /// the source <c>Chart.Notes</c> list 1-1.
+        /// </summary>
+        public IReadOnlyList<FretChunkRecord> FretChunks { get; set; }
+
+        /// <summary>
+        /// Per-note flag, indexed against <c>Chart.Notes</c>: <c>true</c> when
+        /// the note sits at its enclosing chunk's lowest fret position. For a
+        /// 1-note Free chunk this is trivially true. Visualizers paint anchors
+        /// gray to distinguish them from the pattern's "target" notes.
+        /// </summary>
+        public IReadOnlyList<bool> NoteIsAnchor { get; set; }
     }
 }

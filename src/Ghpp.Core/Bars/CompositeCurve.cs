@@ -20,7 +20,12 @@ namespace Ghpp.Core.Bars
             DifficultyOptions options,
             double startTime)
         {
-            var n = Math.Max(fret.Values.Length, Math.Max(strum.Values.Length, sustain.Values.Length));
+            // Sustain complexity is currently disabled in the composite; only
+            // fret and strum complexity contribute to the star rating. The
+            // sustain curve is still produced and surfaced in the report for
+            // inspection.
+            _ = sustain;
+            var n = Math.Max(fret.Values.Length, strum.Values.Length);
             var result = new double[n];
             var p = options.CompositeExponent;
             var invP = 1.0 / p;
@@ -29,8 +34,7 @@ namespace Ghpp.Core.Bars
             {
                 var c = i < fret.Values.Length ? fret.Values[i] : 0.0;
                 var s = i < strum.Values.Length ? strum.Values[i] : 0.0;
-                var l = i < sustain.Values.Length ? sustain.Values[i] : 0.0;
-                var sum = Math.Pow(c, p) + Math.Pow(s, p) + Math.Pow(l, p);
+                var sum = Math.Pow(c, p) + Math.Pow(s, p);
                 result[i] = sum > 0 ? Math.Pow(sum, invP) : 0.0;
             }
 
